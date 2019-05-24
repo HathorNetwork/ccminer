@@ -60,6 +60,8 @@ BOOL WINAPI ConsoleHandler(DWORD);
 #define HEAVYCOIN_BLKHDR_SZ		84
 #define MNR_BLKHDR_SZ 80
 
+#define UINT24_MAX 16777215
+
 #include "nvml.h"
 #ifdef USE_WRAPNVML
 nvml_handle *hnvml = NULL;
@@ -1865,17 +1867,26 @@ static void *miner_thread(void *userdata)
 			#endif
 			memcpy(&work, &g_work, sizeof(struct work));
 			// nonceptr[0] = (UINT32_MAX / opt_n_threads) * thr_id; // 0 if single thr
-			nonceptr[1] = thr_id; // set thread nonce byte
+			if (work.nonce_size != 4) {
+				nonceptr[1] = thr_id; // set thread nonce byte
+			}
 			// nonceptr[0] = ? // too many bytes, we can ignore this one
 		} 
 
-        else if ((work.nonce_size == 16 && work.data[19] == UINT32_MAX) ||
-            (work.nonce_size == 4 && work.data[19] == 0xffffff)) {
+        else if (work.nonce_size == 16 && work.data[19] == UINT32_MAX) {
             // If is block (nonce_size=16) and already reached the nonce limit (UINT32_MAX)
             // or is a tx (nonce_size=4) and already reached the nonce limit (3 bytes)
 			nonceptr[3] = 0; // Reset first byte of nonce
 			nonceptr[2]++; // Increment extra nonce
-		} else
+
+		}
+
+		else if (work.nonce_size == 4 && work.data[19] & UINT24_MAX == UINT24_MAX) {
+			g_work.data[19] += UINT24_MAX + 1;
+			memcpy(&work, &g_work, sizeof(struct work));
+		}
+
+		else
 			// nonceptr[0]++; //??
 			nonceptr[3]++;
 
@@ -2150,7 +2161,7 @@ static void *miner_thread(void *userdata)
 
         if (work.nonce_size == 4) {
             // 3 bytes of nonce size limit for tx
-            nonce_limit = 0xffffff;
+            nonce_limit = UINT24_MAX;
         } else {
             nonce_limit = UINT32_MAX;
         }
@@ -2550,13 +2561,8 @@ static void *miner_thread(void *userdata)
 
         // if nonce found, submit work
         // Or if it's a tx and we have reached the nonce limit
-        if ((rc > 0 && !opt_benchmark) || (work.nonce_size == 4 && nonceptr[2] >= 0xff)) {
-            // If it's a tx, the nonce must be recreated getting 3 bytes of nonceptr[3] and 1 byte of nonceptr[2]
-            if (work.nonce_size == 4) {
-                nonceptr[3] = nonceptr[3] | ((nonceptr[2] & 0xff) << 3*8);
-                nonceptr[2] = 0;
-            }
-
+		bool tx_limit = work.nonce_size == 4 && (nonceptr[0] || nonceptr[1] || nonceptr[2]);
+        if ((rc > 0 && !opt_benchmark) || tx_limit) {
 			uint32_t curnonce = nonceptr[0]; // current scan position
 
 			if (opt_led_mode == LED_MODE_SHARES)
@@ -2572,7 +2578,7 @@ static void *miner_thread(void *userdata)
 			// prevent stale work in solo
 			// we can't submit twice a block!
             // or if it's a tx
-			if ((!have_stratum && !have_longpoll) || (work.nonce_size == 4)) {
+			if ((!have_stratum && !have_longpoll) || tx_limit) {
 				pthread_mutex_lock(&g_work_lock);
 				// will force getwork
 				g_work_time = 0;
