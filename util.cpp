@@ -1510,8 +1510,12 @@ static bool stratum_reconnect(struct stratum_ctx *sctx, json_t *params)
 		port = atoi(json_string_value(port_val));
 	else
 		port = (int) json_integer_value(port_val);
-	if (!host || !port)
-		return false;
+	if (!host || !port) {
+		// We just reconnect to the current Stratum server in this case
+		applog(LOG_NOTICE, "Server requested reconnection to %s", sctx->url);
+		stratum_disconnect(sctx);
+		return true;
+	}
 	
 	free(sctx->url);
 	sctx->url = (char*)malloc(32 + strlen(host));
