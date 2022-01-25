@@ -1,4 +1,4 @@
-FROM nvidia/cuda:10.0-devel as builder
+FROM nvidia/cuda:11.0-devel as builder
 
 RUN apt-get -y update && \
     apt-get -y install \
@@ -13,7 +13,7 @@ RUN cd /tmp/ccminer && \
     ./configure --with-cuda=/usr/local/cuda && \
     make
 
-FROM nvidia/cuda:10.0-base
+FROM nvidia/cuda:11.0-base
 
 RUN apt-get -y update && \
     apt-get -y install \
