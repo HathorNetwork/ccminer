@@ -767,6 +767,9 @@ struct work {
 	struct tx txs[POK_MAX_TXS];
 	// zec solution
 	uint8_t extra[1388];
+
+    // Stores the nonce size of this job (4 bytes for a tx and 16 bytes for a block)
+    size_t nonce_size;
 };
 
 #define POK_BOOL_MASK 0x00008000

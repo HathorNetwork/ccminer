@@ -56,9 +56,11 @@ BOOL WINAPI ConsoleHandler(DWORD);
 #endif
 
 #define PROGRAM_NAME		"ccminer"
-#define LP_SCANTIME		60
+#define LP_SCANTIME		1
 #define HEAVYCOIN_BLKHDR_SZ		84
 #define MNR_BLKHDR_SZ 80
+
+#define UINT24_MAX 16777215
 
 #include "nvml.h"
 #ifdef USE_WRAPNVML
@@ -1594,6 +1596,8 @@ static bool stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 	else
 		weight_to_target(work->target, sctx->job.weigth);
 
+    work->nonce_size = sctx->job.nonce_size;
+
 	return true;
 }
 
@@ -1676,6 +1680,9 @@ static void *miner_thread(void *userdata)
 	bool extrajob = false;
 	char s[16];
 	int rc = 0;
+
+    // Used to limit nonce depending on work nonce size
+    uint32_t nonce_limit;
 
 	memset(&work, 0, sizeof(work)); // prevent work from being used uninitialized
 
@@ -1860,14 +1867,26 @@ static void *miner_thread(void *userdata)
 			#endif
 			memcpy(&work, &g_work, sizeof(struct work));
 			// nonceptr[0] = (UINT32_MAX / opt_n_threads) * thr_id; // 0 if single thr
-			nonceptr[1] = thr_id; // set thread nonce byte
+			if (work.nonce_size != 4) {
+				nonceptr[1] = thr_id; // set thread nonce byte
+			}
 			// nonceptr[0] = ? // too many bytes, we can ignore this one
 		} 
 
-		else if (work.data[19] == UINT32_MAX) {
+        else if (work.nonce_size == 16 && work.data[19] == UINT32_MAX) {
+            // If is block (nonce_size=16) and already reached the nonce limit (UINT32_MAX)
+            // or is a tx (nonce_size=4) and already reached the nonce limit (3 bytes)
 			nonceptr[3] = 0; // Reset first byte of nonce
 			nonceptr[2]++; // Increment extra nonce
-		} else
+
+		}
+
+		else if (work.nonce_size == 4 && work.data[19] & UINT24_MAX == UINT24_MAX) {
+			g_work.data[19] += UINT24_MAX + 1;
+			memcpy(&work, &g_work, sizeof(struct work));
+		}
+
+		else
 			// nonceptr[0]++; //??
 			nonceptr[3]++;
 
@@ -2140,14 +2159,21 @@ static void *miner_thread(void *userdata)
 			max64 = max(minmax-1, max64);
 		}
 
+        if (work.nonce_size == 4) {
+            // 3 bytes of nonce size limit for tx
+            nonce_limit = UINT24_MAX;
+        } else {
+            nonce_limit = UINT32_MAX;
+        }
+
 		// we can't scan more than uint32 capacity
-		max64 = min(UINT32_MAX, max64);
+		max64 = min(nonce_limit, max64);
 
 		start_nonce = nonceptr[0];
 
 		/* never let small ranges at end */
-		if (end_nonce >= UINT32_MAX - 256)
-			end_nonce = UINT32_MAX;
+		if (end_nonce >= nonce_limit - 256)
+			end_nonce = nonce_limit;
 
 		if ((max64 + start_nonce) >= end_nonce)
 			max_nonce = end_nonce;
@@ -2158,7 +2184,7 @@ static void *miner_thread(void *userdata)
 
 		if (unlikely(start_nonce > max_nonce)) {
 			// should not happen but seen in skein2 benchmark with 2 gpus
-			max_nonce = end_nonce = UINT32_MAX;
+			max_nonce = end_nonce = nonce_limit;
 		}
 
 		work.scanned_from = start_nonce;
@@ -2533,8 +2559,10 @@ static void *miner_thread(void *userdata)
 
 		if (cgpu) cgpu->accepted += work.valid_nonces;
 
-		/* if nonce found, submit work */
-		if (rc > 0 && !opt_benchmark) {
+        // if nonce found, submit work
+        // Or if it's a tx and we have reached the nonce limit
+		bool tx_limit = work.nonce_size == 4 && (nonceptr[0] || nonceptr[1] || nonceptr[2]);
+        if ((rc > 0 && !opt_benchmark) || tx_limit) {
 			uint32_t curnonce = nonceptr[0]; // current scan position
 
 			if (opt_led_mode == LED_MODE_SHARES)
@@ -2549,7 +2577,8 @@ static void *miner_thread(void *userdata)
 
 			// prevent stale work in solo
 			// we can't submit twice a block!
-			if (!have_stratum && !have_longpoll) {
+            // or if it's a tx
+			if ((!have_stratum && !have_longpoll) || tx_limit) {
 				pthread_mutex_lock(&g_work_lock);
 				// will force getwork
 				g_work_time = 0;
