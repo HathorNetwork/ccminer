@@ -5,8 +5,6 @@ on:
     - v*
     branches:
     - master
-    # TODO: Remove this branch
-    - feat/support-cuda-11
 
 jobs:
   # Builds and pushes the Docker image to Docker Hub and ECR
