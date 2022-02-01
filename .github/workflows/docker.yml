@@ -1,0 +1,68 @@
+name: docker
+on:
+  push:
+    tags:
+    - v*
+    branches:
+    - master
+    # TODO: Remove this branch
+    - feat/support-cuda-11
+
+jobs:
+  # Builds and pushes the Docker image to Docker Hub and ECR
+  docker-build-push:
+    name: docker-build-push cuda ${{ matrix.cuda-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cuda-version:
+        - "11.0"
+        - "10.0"
+    steps:
+    - name: Prepare tags
+      id: tags
+      shell: python
+      run: |
+        base_dockerhub_tag = 'docker.io/hathornetwork/ccminer:'
+
+        tags = set()
+
+        # Set tag suffix using CUDA version
+        suffix = '-cuda-${{ matrix.cuda-version }}'
+
+        # Create the tags
+        ref = '${{ github.ref }}'
+        if ref.startswith('refs/tags/'):
+            version = ref[10:].split('-', 1)[0]
+
+            tags.add(base_dockerhub_tag + version + suffix)
+            tags.add(base_dockerhub_tag + 'latest' + suffix)
+
+            # Cuda 11.0 is our default for generating the generic tags
+            if '${{ matrix.cuda-version }}' == '11.0':
+              tags.add(base_dockerhub_tag + version)
+              tags.add(base_dockerhub_tag + 'latest')
+        elif ref == 'refs/heads/master':
+            tags.add(base_dockerhub_tag + 'beta' + suffix)
+        else:
+            tags.add(base_dockerhub_tag + 'testing' + suffix)
+
+        print("::set-output name=tags::" + ",".join(tags))
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@27d0a4f181a40b142cce983c5393082c365d1480
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@94ab11c41e45d028884a99163086648e898eed25
+    - name: Login to DockerHub
+      uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Build and push
+      uses: docker/build-push-action@a66e35b9cbcf4ad0ea91ffcaf7bbad63ad9e0229
+      with:
+        build-args: CUDA=${{ matrix.cuda-version }}
+        push: true
+        tags: ${{ steps.tags.outputs.tags }}
+        platforms: linux/amd64,linux/arm64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
