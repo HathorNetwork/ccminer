@@ -45,7 +45,11 @@ jobs:
         else:
             tags.add(base_dockerhub_tag + 'testing' + suffix)
 
-        print("::set-output name=tags::" + ",".join(tags))
+        outputs = []
+        if os.environ['GITHUB_OUTPUT']:
+          outputs.append(os.environ['GITHUB_OUTPUT'])
+        outputs.append('{name}={value}'.format(name='tags', value=','.join(tags)))
+        os.environ['GITHUB_OUTPUT'] = '\n'.join(outputs)
     - name: Set up QEMU
       uses: docker/setup-qemu-action@27d0a4f181a40b142cce983c5393082c365d1480
     - name: Set up Docker Buildx
