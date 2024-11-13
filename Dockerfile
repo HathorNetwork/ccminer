@@ -1,5 +1,5 @@
-ARG CUDA=11.0
-FROM nvidia/cuda:$CUDA-devel as builder
+ARG CUDA=11.6.1
+FROM nvidia/cuda:$CUDA-devel-ubuntu20.04 as builder
 
 RUN apt-get -y update && \
     apt-get -y install \
@@ -14,7 +14,7 @@ RUN cd /tmp/ccminer && \
     ./configure --with-cuda=/usr/local/cuda && \
     make
 
-FROM nvidia/cuda:$CUDA-base
+FROM nvidia/cuda:$CUDA-base-ubuntu20.04
 
 RUN apt-get -y update && \
     apt-get -y install \
